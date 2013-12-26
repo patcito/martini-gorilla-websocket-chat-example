@@ -40,6 +40,12 @@ func addClient(cc ClientConn) {
 	ActiveClientsRWMutex.Unlock()
 }
 
+func deleteClient(cc ClientConn) {
+	ActiveClientsRWMutex.Lock()
+	delete(ActiveClients, cc)
+	ActiveClientsRWMutex.Unlock()
+}
+
 func broadcastMessage(messageType int, message []byte) {
 	ActiveClientsRWMutex.RLock()
 	defer ActiveClientsRWMutex.RUnlock()
@@ -87,8 +93,12 @@ func main() {
 		addClient(sockCli)
 
 		for {
+			log.Println(len(ActiveClients), ActiveClients)
 			messageType, p, err := ws.ReadMessage()
 			if err != nil {
+				deleteClient(sockCli)
+				log.Println("bye")
+				log.Println(err)
 				return
 			}
 			broadcastMessage(messageType, p)
