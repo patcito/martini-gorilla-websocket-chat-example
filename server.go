@@ -1,14 +1,14 @@
 package main
- 
+
 import (
-  "github.com/codegangsta/martini"
-  "github.com/gorilla/websocket"
-  "log"
-  "net"
-  "net/http"
-  "sync"
+	"github.com/codegangsta/martini"
+	"github.com/gorilla/websocket"
+	"log"
+	"net"
+	"net/http"
+	"sync"
 )
- 
+
 /*
   Go is a great langauge but you have to be aware of what happens when you are mutating state from multiple goroutines.
   Everytime a web request comes in, in your /sock handler down below Go will create a new goroutine to service that
@@ -30,20 +30,31 @@ var ActiveClients = make(map[ClientConn]int)
 var ActiveClientsRWMutex sync.RWMutex
 
 type ClientConn struct {
-  websocket *websocket.Conn
-  clientIP  net.Addr
+	websocket *websocket.Conn
+	clientIP  net.Addr
 }
 
 func addClient(cc ClientConn) {
-  ActiveClientsRWMutex.Lock()
-  ActiveClients[cc] = 0
-  ActiveClientsRWMutex.Unlock()
+	ActiveClientsRWMutex.Lock()
+	ActiveClients[cc] = 0
+	ActiveClientsRWMutex.Unlock()
+}
+
+func broadcastMessage(messageType int, message []byte) {
+	ActiveClientsRWMutex.RLock()
+	defer ActiveClientsRWMutex.RUnlock()
+
+	for client, _ := range ActiveClients {
+		if err := client.websocket.WriteMessage(messageType, message); err != nil {
+			return
+		}
+	}
 }
 
 func main() {
-  m := martini.Classic()
-  m.Get("/", func() string {
-    return `<html><body><script src='//ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js'></script>
+	m := martini.Classic()
+	m.Get("/", func() string {
+		return `<html><body><script src='//ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js'></script>
     <ul id=messages></ul><form><input id=message><input type="submit" id=send value=Send></form>
     <script>
     var c=new WebSocket('ws://localhost:3000/sock');
@@ -60,32 +71,28 @@ func main() {
       });
     }
     </script></body></html>`
-  })
-  m.Get("/sock", func(w http.ResponseWriter, r *http.Request) {
-    log.Println(ActiveClients)
-    ws, err := websocket.Upgrade(w, r, nil, 1024, 1024)
-    if _, ok := err.(websocket.HandshakeError); ok {
-      http.Error(w, "Not a websocket handshake", 400)
-      return
-    } else if err != nil {
-      log.Println(err)
-      return
-    }
-    client := ws.RemoteAddr()
-    sockCli := ClientConn{ws, client}
-    addClient(sockCli)
- 
-    for {
-      messageType, p, err := ws.ReadMessage()
-      if err != nil {
-        return
-      }
-      for client, _ := range ActiveClients {
-        if err := client.websocket.WriteMessage(messageType, p); err != nil {
-          return
-        }
-      }
-    }
-  })
-  m.Run()
+	})
+	m.Get("/sock", func(w http.ResponseWriter, r *http.Request) {
+		log.Println(ActiveClients)
+		ws, err := websocket.Upgrade(w, r, nil, 1024, 1024)
+		if _, ok := err.(websocket.HandshakeError); ok {
+			http.Error(w, "Not a websocket handshake", 400)
+			return
+		} else if err != nil {
+			log.Println(err)
+			return
+		}
+		client := ws.RemoteAddr()
+		sockCli := ClientConn{ws, client}
+		addClient(sockCli)
+
+		for {
+			messageType, p, err := ws.ReadMessage()
+			if err != nil {
+				return
+			}
+			broadcastMessage(messageType, p)
+		}
+	})
+	m.Run()
 }
